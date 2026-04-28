@@ -992,5 +992,263 @@ window.addEventListener('load', () => {
 });
 </script>
 
+<script>
+// ============================================================
+// SESSION TIMER & WEEKLY LIMIT
+// ============================================================
+const SESSION_LIMIT_MS = 45 * 60 * 1000; // 45 minutes
+const MAX_SESSIONS_PER_WEEK = 2;
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+let sessionStartTime = null;
+let sessionTimer = null;
+let warningShown5 = false;
+let warningShown2 = false;
+let sessionEnded = false;
+
+function getSessionData() {
+  const data = JSON.parse(localStorage.getItem('hb_session_data') || '{}');
+  return {
+    weekStart: data.weekStart || null,
+    sessionsThisWeek: data.sessionsThisWeek || 0,
+    lastSessionEnd: data.lastSessionEnd || null
+  };
+}
+
+function saveSessionData(data) {
+  localStorage.setItem('hb_session_data', JSON.stringify(data));
+}
+
+function getWeekStart() {
+  const now = new Date();
+  const day = now.getDay();
+  const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+  const monday = new Date(now.setDate(diff));
+  monday.setHours(0, 0, 0, 0);
+  return monday.getTime();
+}
+
+function checkWeeklyLimit() {
+  const data = getSessionData();
+  const currentWeekStart = getWeekStart();
+
+  // Reset if new week
+  if (!data.weekStart || data.weekStart < currentWeekStart) {
+    saveSessionData({ weekStart: currentWeekStart, sessionsThisWeek: 0, lastSessionEnd: null });
+    return false;
+  }
+
+  return data.sessionsThisWeek >= MAX_SESSIONS_PER_WEEK;
+}
+
+function startSessionTimer() {
+  if (checkWeeklyLimit()) {
+    showWeeklyLimitMessage();
+    return;
+  }
+
+  sessionStartTime = Date.now();
+  warningShown5 = false;
+  warningShown2 = false;
+  sessionEnded = false;
+
+  sessionTimer = setInterval(() => {
+    if (sessionEnded) return;
+
+    const elapsed = Date.now() - sessionStartTime;
+    const remaining = SESSION_LIMIT_MS - elapsed;
+    const remainingMins = Math.floor(remaining / 60000);
+
+    if (remaining <= 0) {
+      clearInterval(sessionTimer);
+      endSession();
+      return;
+    }
+
+    if (remainingMins <= 2 && !warningShown2) {
+      warningShown2 = true;
+      showTimerWarning(2);
+    } else if (remainingMins <= 5 && !warningShown5) {
+      warningShown5 = true;
+      showTimerWarning(5);
+    }
+  }, 10000); // check every 10 seconds
+}
+
+function showTimerWarning(minutes) {
+  const warning = document.createElement('div');
+  warning.id = 'timer-warning-' + minutes;
+  warning.style.cssText = `
+    position: fixed;
+    bottom: 100px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 20px;
+    font-size: 13px;
+    color: var(--text-dim);
+    text-align: center;
+    z-index: 200;
+    max-width: 300px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+    animation: fadeUp 0.3s ease forwards;
+  `;
+  warning.innerHTML = minutes === 5
+    ? '🌿 Just a gentle note — we have about 5 minutes left in this session.'
+    : '🌿 We have about 2 minutes left. Start wrapping up when you feel ready.';
+
+  document.body.appendChild(warning);
+  setTimeout(() => warning.remove(), 8000);
+}
+
+function endSession() {
+  if (sessionEnded) return;
+  sessionEnded = true;
+
+  // Record session
+  const data = getSessionData();
+  data.sessionsThisWeek = (data.sessionsThisWeek || 0) + 1;
+  data.lastSessionEnd = Date.now();
+  saveSessionData(data);
+
+  // Disable input
+  const input = document.getElementById('userInput');
+  const sendBtn = document.getElementById('sendBtn');
+  if (input) input.disabled = true;
+  if (sendBtn) sendBtn.disabled = true;
+
+  // Show end message in chat
+  addMessage('bot', `We've been together for 45 minutes — that's a full session, and you showed up for yourself today. That matters more than you know.
+
+Give yourself time to sit with what came up. You don't have to figure everything out right now. Let it settle.
+
+Some things that might help between now and our next session:
+- Journal about what felt most significant today
+- Notice when the parts we talked about show up in your daily life
+- Be gentle with yourself — this work takes time
+
+I'll be here when you're ready to come back. Take care of yourself. 🤍
+
+— If you ever want to connect with the person who built this space, find them at @noah_w_30 on Instagram.`);
+
+  // Show overlay after a short delay
+  setTimeout(() => showSessionEndOverlay(), 3000);
+}
+
+function showSessionEndOverlay() {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = `
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 300;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  `;
+  overlay.innerHTML = `
+    <div style="background: var(--bg3); border: 1px solid var(--border); border-radius: 20px; padding: 32px 28px; max-width: 380px; width: 100%; text-align: center;">
+      <div style="font-size: 32px; margin-bottom: 16px;">🌿</div>
+      <div style="font-family: 'Cormorant Garamond', serif; font-size: 22px; color: var(--text); margin-bottom: 12px;">Session complete</div>
+      <div style="font-size: 13px; color: var(--text-dim); line-height: 1.7; margin-bottom: 24px;">
+        You've used your 45 minutes for today. This limit exists because deep emotional work needs time to integrate — just like sleep after learning, your mind needs space to process what came up.<br><br>
+        Come back in a few days for your next session. Until then, journal, rest, and be kind to yourself.
+      </div>
+      <button onclick="this.parentElement.parentElement.remove()" style="
+        background: linear-gradient(135deg, var(--accent), var(--accent));
+        border: none;
+        border-radius: 10px;
+        padding: 12px 24px;
+        color: white;
+        font-family: 'DM Sans', sans-serif;
+        font-size: 13px;
+        cursor: pointer;
+        width: 100%;
+      ">I understand 🤍</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+function showWeeklyLimitMessage() {
+  // Disable input immediately
+  const input = document.getElementById('userInput');
+  const sendBtn = document.getElementById('sendBtn');
+  if (input) input.disabled = true;
+  if (sendBtn) sendBtn.disabled = true;
+
+  // Calculate days until next week
+  const data = getSessionData();
+  const nextWeekStart = getWeekStart() + WEEK_MS;
+  const daysUntil = Math.ceil((nextWeekStart - Date.now()) / (24 * 60 * 60 * 1000));
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = `
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 300;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  `;
+  overlay.innerHTML = `
+    <div style="background: var(--bg3); border: 1px solid var(--border); border-radius: 20px; padding: 32px 28px; max-width: 380px; width: 100%; text-align: center;">
+      <div style="font-size: 32px; margin-bottom: 16px;">💙</div>
+      <div style="font-family: 'Cormorant Garamond', serif; font-size: 22px; color: var(--text); margin-bottom: 12px;">You've done the work this week</div>
+      <div style="font-size: 13px; color: var(--text-dim); line-height: 1.7; margin-bottom: 24px;">
+        You've completed your 2 sessions for this week. This limit exists because healing isn't meant to be rushed — deep emotional work needs time between sessions to settle and integrate.<br><br>
+        <strong style="color: var(--text);">Until your sessions reset in ${daysUntil} day${daysUntil !== 1 ? 's' : ''}:</strong><br><br>
+        🌿 Journal about what came up in your sessions<br>
+        🌿 Notice the parts you identified showing up in daily life<br>
+        🌿 Be gentle and patient with yourself<br>
+        🌿 If you need urgent support, text HOME to 741741<br><br>
+        You're doing the work. That matters. 🤍
+      </div>
+      <div style="font-size: 11px; color: var(--text-dim);">New sessions available in ${daysUntil} day${daysUntil !== 1 ? 's' : ''}</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+// Hook into the existing session start
+const originalLoadSession = window.loadSession;
+window.addEventListener('DOMContentLoaded', () => {
+  // Start timer when first message is sent
+  const originalSendMessage = window.sendMessage;
+});
+
+// Override sendMessage to start timer on first message
+document.addEventListener('DOMContentLoaded', () => {
+  const textarea = document.getElementById('userInput');
+  if (textarea) {
+    textarea.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey && !sessionStartTime && !sessionEnded) {
+        if (!checkWeeklyLimit()) {
+          startSessionTimer();
+        }
+      }
+    });
+
+    document.getElementById('sendBtn')?.addEventListener('click', () => {
+      if (!sessionStartTime && !sessionEnded) {
+        if (!checkWeeklyLimit()) {
+          startSessionTimer();
+        }
+      }
+    });
+  }
+
+  // Check weekly limit on load
+  if (checkWeeklyLimit()) {
+    setTimeout(() => showWeeklyLimitMessage(), 1500);
+  }
+});
+</script>
+
 </body>
 </html>
